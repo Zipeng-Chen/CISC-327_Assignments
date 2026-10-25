@@ -405,3 +405,210 @@ def assessment_day(monkeypatch):
     monkeypatch.setattr("app.routes.views.date", FixedDate)
     return fixed_day
 
+# Feature 7: Check out a book (R4, R7, R16; queue interpretation from R9)
+# Tests loan creation, inventory updates, borrower eligibility, and reservation priority
+
+def test_checkout_records_member_book_dates_and_decrements_stock(client, assessment_day):
+    # Create a book and member, then check out the book
+    book = _create_book(client)
+    member = _create_member(client)
+    response = client.post("/loans", json={"book_id": book["id"], "member_id": member["id"]})
+
+    # Verify successful checkout with correct loan details and dates
+    assert response.status_code == 201
+    loan = response.get_json()
+    assert loan == {
+        "id": loan["id"], "book_id": book["id"], "member_id": member["id"],
+        "loan_date": assessment_day.isoformat(),
+        "due_date": (assessment_day + timedelta(days=LOAN_PERIOD_DAYS)).isoformat(),
+        "return_date": None,
+    }
+
+    # Confirm the loan is saved and available copies decrease by one
+    assert client.get("/loans").get_json() == [loan]
+    assert client.get(f"/books/{book['id']}").get_json() == {**book, "available_copies": 1}
+
+
+def test_checkout_form_creates_dated_loan_and_displays_return_action(client, assessment_day):
+    # Submit checkout through the HTML form
+    book = _create_book(client)
+    member = _create_member(client)
+    response = _submit_checkout(client, book["id"], member["id"], via_form=True)
+
+    # Verify the loan contains correct book, member, and date information
+    assert response.status_code == 200
+    loan, = client.get("/loans").get_json()
+    assert loan["book_id"] == book["id"] and loan["member_id"] == member["id"]
+    assert loan["loan_date"] == assessment_day.isoformat()
+    assert loan["due_date"] == (assessment_day + timedelta(days=LOAN_PERIOD_DAYS)).isoformat()
+    assert loan["return_date"] is None
+
+    # Confirm inventory decreases and the page displays a return action
+    assert client.get(f"/books/{book['id']}").get_json()["available_copies"] == 1
+    assert f"/ui/loans/{loan['id']}/return" in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_checkout_last_available_copy_succeeds_and_leaves_zero_stock(client, via_form):
+    # Test checkout of the last available copy through API and HTML form
+    book = _create_book(client, total_copies=1)
+    member = _create_member(client)
+    response = _submit_checkout(client, book["id"], member["id"], via_form)
+
+    # Verify successful checkout and zero remaining stock
+    assert response.status_code == (200 if via_form else 201)
+    loan, = client.get("/loans").get_json()
+    assert loan["book_id"] == book["id"] and loan["member_id"] == member["id"]
+    assert client.get(f"/books/{book['id']}").get_json() == {**book, "available_copies": 0}
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_checkout_rejects_exhausted_stock_without_extra_loan_or_negative_inventory(client, via_form):
+    # R7: Prevent checkout when all copies are already borrowed
+    book = _create_book(client, total_copies=1)
+    member = _create_member(client)
+    first_loan = _checkout(client, book["id"], member["id"])
+
+    # Attempt another checkout with no available stock
+    response = _submit_checkout(client, book["id"], member["id"], via_form)
+    if not via_form:
+        assert 400 <= response.status_code < 500, "Checkout must reject exhausted stock"
+
+    # Verify no extra loan is created and inventory remains at zero
+    assert client.get("/loans").get_json() == [first_loan]
+    assert client.get(f"/books/{book['id']}").get_json() == {**book, "available_copies": 0}
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_checkout_unknown_book_leaves_inventory_and_loans_unchanged(client, via_form):
+    # Attempt checkout using a non-existent book ID
+    existing = _create_book(client)
+    member = _create_member(client)
+    response = _submit_checkout(client, 9999, member["id"], via_form)
+
+    # Verify the API returns HTTP 404 for an unknown book
+    if not via_form:
+        assert response.status_code == 404
+        assert response.get_json() == {"error": "Book not found"}
+
+    # Confirm no loans are created and existing books remain unchanged
+    assert client.get("/loans").get_json() == []
+    assert client.get("/books").get_json() == [existing]
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_checkout_rejects_nonexistent_member_without_changing_stock(client, via_form):
+    # R7: Reject checkout requests from non-existent members
+    book = _create_book(client)
+    response = _submit_checkout(client, book["id"], 9999, via_form)
+
+    # Verify the API rejects the invalid member ID
+    if not via_form:
+        assert 400 <= response.status_code < 500, "Checkout needs an existing member"
+
+    # Confirm no loan is created and inventory remains unchanged
+    assert client.get("/loans").get_json() == []
+    assert client.get(f"/books/{book['id']}").get_json() == book
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+@pytest.mark.parametrize("days_overdue", [1, 4])
+def test_checkout_blocks_overdue_borrower_even_during_fine_grace_period(
+    client, assessment_day, via_form, days_overdue
+):
+    # R16: Block checkout for borrowers with overdue loans
+    # Test 1-day and 4-day overdue cases through API and HTML form
+    book = _create_book(client, total_copies=3)
+    member = _create_member(client)
+    previous = _checkout(client, book["id"], member["id"])
+
+    # Modify the due date directly because the public API cannot update it
+    store.loans[previous["id"]].due_date = assessment_day - timedelta(days=days_overdue)
+    before_loans = client.get("/loans").get_json()
+    before_book = client.get(f"/books/{book['id']}").get_json()
+
+    # Attempt checkout while the borrower has an overdue loan
+    response = _submit_checkout(client, book["id"], member["id"], via_form)
+    if not via_form:
+        assert 400 <= response.status_code < 500, "R16 requires overdue borrowers to be blocked"
+
+    # Verify rejected checkout does not change loans or inventory
+    assert client.get("/loans").get_json() == before_loans
+    assert client.get(f"/books/{book['id']}").get_json() == before_book
+
+
+def test_checkout_accepts_borrower_whose_existing_loan_is_due_today(client, assessment_day):
+    # A loan due today is not overdue, so another checkout should be allowed
+    book = _create_book(client, total_copies=3)
+    member = _create_member(client)
+    first = _checkout(client, book["id"], member["id"])
+    store.loans[first["id"]].due_date = assessment_day
+
+    # Verify a second loan can be created for the same member
+    second = _checkout(client, book["id"], member["id"])
+    loans = client.get("/loans").get_json()
+    assert {loan["id"] for loan in loans} == {first["id"], second["id"]}
+    assert all(loan["member_id"] == member["id"] for loan in loans)
+
+    # Both checkouts should reduce available copies from three to one
+    assert client.get(f"/books/{book['id']}").get_json()["available_copies"] == 1
+
+
+def test_checkout_accepts_borrower_after_overdue_loan_has_been_returned(client, assessment_day):
+    # Create an overdue loan and return it before another checkout
+    book = _create_book(client, total_copies=1)
+    member = _create_member(client)
+    first = _checkout(client, book["id"], member["id"])
+    store.loans[first["id"]].due_date = assessment_day - timedelta(days=4)
+
+    # Return the overdue book to remove the borrowing restriction
+    returned = client.put(f"/loans/{first['id']}/return")
+    assert returned.status_code == 200
+
+    # Verify the member can successfully borrow again
+    second = _checkout(client, book["id"], member["id"])
+    loans = {loan["id"]: loan for loan in client.get("/loans").get_json()}
+
+    # Confirm the first loan is returned and the second remains active
+    assert loans[first["id"]]["return_date"] == assessment_day.isoformat()
+    assert loans[second["id"]]["return_date"] is None
+    assert client.get(f"/books/{book['id']}").get_json()["available_copies"] == 0
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_checkout_cannot_bypass_waiting_member_after_reserved_book_is_returned(client, via_form):
+    # R9: Waiting members should have priority when reserved books are returned
+    book = _create_book(client, total_copies=1)
+    borrower = _create_member(client)
+    waiter = _create_member(client, "Bob")
+    first = _checkout(client, book["id"], borrower["id"])
+
+    # Create a reservation for another member while the book is borrowed
+    reservation_response = client.post(
+        "/reservations", json={"book_id": book["id"], "member_id": waiter["id"]}
+    )
+    assert reservation_response.status_code == 201
+    reservation = reservation_response.get_json()
+
+    # Return the book and attempt checkout by the original borrower
+    assert client.put(f"/loans/{first['id']}/return").status_code == 200
+    before_loans = client.get("/loans").get_json()
+    response = _submit_checkout(client, book["id"], borrower["id"], via_form)
+
+    # Verify checkout cannot bypass the waiting member
+    if not via_form:
+        assert 400 <= response.status_code < 500, "The waiting member must have priority"
+
+    # Confirm loans, inventory, and reservation remain unchanged
+    assert client.get("/loans").get_json() == before_loans
+    assert client.get(f"/books/{book['id']}").get_json()["available_copies"] == 1
+    assert client.get("/reservations").get_json() == [reservation]
+
+
+# Helper: Submit book returns through either the HTML form or JSON API
+def _submit_return(client, loan_id, via_form):
+    # Use the HTML endpoint when via_form=True, otherwise use the API
+    if via_form:
+        return client.post(f"/ui/loans/{loan_id}/return", follow_redirects=True)
+    return client.put(f"/loans/{loan_id}/return")
+
