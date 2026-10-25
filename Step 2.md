@@ -65,3 +65,8 @@ The test file uses pytest and the supplied `client` fixture from `tests/conftest
 **Controlled dates:** The `assessment_day` fixture freezes only the application's imported date objects at 21 October 2026. An overdue loan's due date is set directly in isolated test data because the public API cannot change it. The computer's clock and the running development server are not changed. State assertions refer to the reference application's in-memory lifetime, not storage across restarts.
 
 **Error assertions:** For invalid API checkouts, the tests accept any 4xx rejection rather than inventing a required 400/403/409 code. For HTML forms, rejection is assessed through unchanged loans and inventory because the UI may redirect. Missing-field tests require a client-validation response based on the creation schema. Where necessary, exception propagation is disabled for that test so that a server error can be checked as an HTTP response. These are test configuration changes only.
+
+
+## Defect checks to explain after execution
+
+The following expectations come from Table A or the documented input schema. Step 1 and source inspection indicate possible failures, but **no Step 2 test results have been collected**. These tests remain ordinary assertions; none is skipped, marked xfail, or changed to accept a defect.
