@@ -218,8 +218,8 @@ def test_search_books_no_match_is_empty_and_preserves_catalogue(client):
     assert response.get_json() == []
     assert client.get("/books").get_json() == [book]
     
-# Feature 4: View one book's details (R3, supported fields).
-# Tests retrieving a specific book and handling invalid book IDs.
+# Feature 4: View one book's details (R3, supported fields)
+# Tests retrieving a specific book and handling invalid book IDs
 
 def test_get_book_returns_selected_record_with_complete_stored_details(client):
     # Create two books and retrieve the second one by its ID.
@@ -285,7 +285,7 @@ def test_partial_book_update_preserves_omitted_fields_and_search_uses_new_title(
 
 
 def test_update_unknown_book_returns_error_without_creating_record(client):
-    # Attempt to update a book that does not exist.
+    # Attempt to update a book that does not exist
     existing = _create_book(client)
     response = client.put("/books/9999", json={"title": "Ghost"})
 
@@ -296,3 +296,112 @@ def test_update_unknown_book_returns_error_without_creating_record(client):
     # Failed updates should not create or modify any books.
     assert client.get("/books").get_json() == [existing]
     
+# Feature 6: Delete a book (existing README operation; no direct Table A match).
+# Tests successful deletion, invalid IDs, repeated deletion, and HTML form deletion.
+
+def test_delete_book_removes_only_target_from_lookup_list_and_search(client):
+    # Create two books and delete only the target book.
+    target = _create_book(client, title="Delete This Unique Title")
+    other = _create_book(client, title="Keep This Book", isbn="keep-1")
+    response = client.delete(f"/books/{target['id']}")
+
+    # Verify successful deletion (204 No Content).
+    assert response.status_code == 204
+    assert response.data == b""
+
+    # Deleted book should disappear from lookup, catalogue, and search.
+    assert client.get(f"/books/{target['id']}").status_code == 404
+    assert client.get("/books").get_json() == [other]
+    assert client.get("/books", query_string={"search": "Delete This"}).get_json() == []
+
+
+def test_delete_unknown_book_returns_error_and_preserves_existing_book(client):
+    # Attempt to delete a non-existent book.
+    existing = _create_book(client)
+    response = client.delete("/books/9999")
+
+    # Verify HTTP 404 and the expected error message.
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+
+    # Failed deletion should not affect existing books.
+    assert client.get("/books").get_json() == [existing]
+
+
+def test_delete_book_twice_does_not_remove_another_book(client):
+    # Create two books and successfully delete the first one.
+    target = _create_book(client)
+    other = _create_book(client, title="Keep After Repeat", isbn="keep-2")
+    assert client.delete(f"/books/{target['id']}").status_code == 204
+
+    # Deleting the same book again should return HTTP 404.
+    response = client.delete(f"/books/{target['id']}")
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+
+    # Repeated deletion must not affect the remaining book.
+    assert client.get("/books").get_json() == [other]
+
+
+def test_delete_book_form_removes_target_and_redirects_to_updated_catalogue(client):
+    # Create two books and delete the target through the HTML form.
+    target = _create_book(client, title="Form Deletion Target")
+    other = _create_book(client, title="Form Deletion Survivor", isbn="keep-3")
+    response = client.post(f"/ui/books/{target['id']}/delete", follow_redirects=True)
+
+    # Verify successful navigation and updated catalogue.
+    assert response.status_code == 200
+    assert client.get("/books").get_json() == [other]
+
+    # Confirm only the remaining book appears on the resulting page.
+    html = response.get_data(as_text=True)
+    assert target["title"] not in html
+    assert other["title"] in html
+
+
+# Helper: Create a library member for loan-related tests.
+def _create_member(client, name="Alice"):
+    response = client.post("/members", json={"name": name, "email": f"{name.lower()}@example.test"})
+
+    # Verify successful member creation and return the saved record.
+    assert response.status_code == 201, response.get_data(as_text=True)
+    return response.get_json()
+
+
+# Helper: Check out a book to a member through the JSON API.
+def _checkout(client, book_id, member_id):
+    response = client.post("/loans", json={"book_id": book_id, "member_id": member_id})
+
+    # Verify the loan was created successfully.
+    assert response.status_code == 201, response.get_data(as_text=True)
+    return response.get_json()
+
+
+# Helper: Submit checkout requests through either the HTML form or JSON API.
+def _submit_checkout(client, book_id, member_id, via_form):
+    payload = {"book_id": book_id, "member_id": member_id}
+
+    # Use form submission when via_form=True; otherwise use the JSON API.
+    if via_form:
+        return client.post("/ui/loans", data=payload, follow_redirects=True)
+    return client.post("/loans", json=payload)
+
+
+@pytest.fixture
+def assessment_day(monkeypatch):
+    # Freeze the application date for consistent, reproducible loan tests.
+    fixed_day = date(2026, 10, 21)
+
+    # Override date.today() to return the fixed test date.
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return fixed_day
+
+    # Apply the fixed date to the relevant application modules.
+    # This does not change the computer's actual date.
+    monkeypatch.setattr("app.models.loan.date", FixedDate)
+    monkeypatch.setattr("app.routes.loans.date", FixedDate)
+    monkeypatch.setattr("app.routes.views.date", FixedDate)
+    return fixed_day
+
