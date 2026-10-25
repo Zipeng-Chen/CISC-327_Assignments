@@ -217,3 +217,82 @@ def test_search_books_no_match_is_empty_and_preserves_catalogue(client):
     assert response.status_code == 200
     assert response.get_json() == []
     assert client.get("/books").get_json() == [book]
+    
+# Feature 4: View one book's details (R3, supported fields).
+# Tests retrieving a specific book and handling invalid book IDs.
+
+def test_get_book_returns_selected_record_with_complete_stored_details(client):
+    # Create two books and retrieve the second one by its ID.
+    first = _create_book(client)
+    second = _create_book(client, title="Selected Book", isbn="selected-1", total_copies=4)
+    response = client.get(f"/books/{second['id']}")
+
+    # Verify the correct book is returned with all its stored details.
+    assert response.status_code == 200
+    assert response.get_json() == second
+    assert response.get_json()["id"] != first["id"]
+
+
+def test_get_unknown_book_returns_error_without_altering_catalogue(client):
+    # Request a non-existent book ID.
+    existing = _create_book(client)
+    response = client.get("/books/9999")
+
+    # Verify HTTP 404 and the expected error message.
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+
+    # Invalid requests should not modify the existing catalogue.
+    assert client.get("/books").get_json() == [existing]
+
+
+# Feature 5: Update a book (existing README operation; no direct Table A match).
+# Tests full updates, partial updates, and handling invalid book IDs.
+
+def test_update_book_persists_changed_fields_and_keeps_other_book_unchanged(client):
+    # Create two books and prepare updated information for the first one.
+    book = _create_book(client)
+    other = _create_book(client, title="Unchanged Book", isbn="unchanged-1")
+    changes = {"title": "Revised Title", "author": "Revised Author", "isbn": "revised-1",
+               "total_copies": 5, "available_copies": 4}
+
+    # Update the first book using PUT.
+    response = client.put(f"/books/{book['id']}", json=changes)
+
+    # Verify the updated fields are saved correctly.
+    assert response.status_code == 200
+    assert response.get_json() == {**book, **changes}
+    assert client.get(f"/books/{book['id']}").get_json() == {**book, **changes}
+
+    # Updating one book should not affect other books.
+    assert client.get(f"/books/{other['id']}").get_json() == other
+
+
+def test_partial_book_update_preserves_omitted_fields_and_search_uses_new_title(client):
+    # Create a book and update only its title.
+    book = _create_book(client, title="Original Unique Title")
+    response = client.put(f"/books/{book['id']}", json={"title": "Revised Unique Title"})
+    expected = {**book, "title": "Revised Unique Title"}
+
+    # Verify the new title is saved while other fields remain unchanged.
+    assert response.status_code == 200
+    assert response.get_json() == expected
+    assert client.get(f"/books/{book['id']}").get_json() == expected
+
+    # Search should use the updated title, not the original one.
+    assert client.get("/books", query_string={"search": "Original Unique"}).get_json() == []
+    assert client.get("/books", query_string={"search": "Revised Unique"}).get_json() == [expected]
+
+
+def test_update_unknown_book_returns_error_without_creating_record(client):
+    # Attempt to update a book that does not exist.
+    existing = _create_book(client)
+    response = client.put("/books/9999", json={"title": "Ghost"})
+
+    # Verify HTTP 404 and the expected error message.
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Book not found"}
+
+    # Failed updates should not create or modify any books.
+    assert client.get("/books").get_json() == [existing]
+    
