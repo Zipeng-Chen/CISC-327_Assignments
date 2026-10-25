@@ -119,3 +119,39 @@ def test_add_book_form_saves_fields_and_displays_created_record(client):
     # Confirm the created book appears on the resulting HTML page
     html = response.get_data(as_text=True)
     assert all(value in html for value in ["Form Book", "Form Author", "form-1"])
+    
+    
+    
+# Feature 2: List all books, including their stored availability (R3, partial).
+# tests that all books are displayed correctly without modifying stored data.
+
+def test_list_books_returns_every_record_without_changing_state(client):
+    # Create three books with different titles, ISBNs, and copy counts
+    expected = [_create_book(client, title=f"Book {n}", isbn=f"isbn-{n}", total_copies=n)
+                for n in range(1, 4)]
+
+    # Retrieve all books and verify the response contains every record
+    response = client.get("/books")
+    assert response.status_code == 200
+    assert sorted(response.get_json(), key=lambda book: book["id"]) == expected
+
+    # Repeated GET requests should return the same data without changes.
+    assert client.get("/books").get_json() == response.get_json()
+
+
+def test_books_page_displays_all_books_and_inventory_headings(client):
+    # Create two books to verify their visibility on the HTML page
+    first = _create_book(client, title="First Catalogue Book")
+    second = _create_book(client, title="Second Catalogue Book", isbn="second-1")
+
+    # Retrieve the books page and check that both titles are displayed
+    response = client.get("/ui/books")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert first["title"] in html and second["title"] in html
+
+    # Verify the page includes inventory column headings
+    assert "<th>Total</th>" in html and "<th>Available</th>" in html
+
+    # Viewing the page should not modify the stored books
+    assert client.get("/books").get_json() == [first, second]
