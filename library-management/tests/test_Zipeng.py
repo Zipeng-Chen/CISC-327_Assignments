@@ -155,3 +155,65 @@ def test_books_page_displays_all_books_and_inventory_headings(client):
 
     # Viewing the page should not modify the stored books
     assert client.get("/books").get_json() == [first, second]
+    
+# Feature 3: Search by title or author (R1, R2)
+# Tests case-insensitive search, partial matching, result ordering, and no-match cases.
+
+@pytest.mark.parametrize("query", ["cLeAn", "mArTiN", "Code Hand"])
+def test_search_books_matches_partial_title_or_author_case_insensitively(client, query):
+    # Test different search terms and capitalization for title and author
+    match = _create_book(client, title="Clean Code Handbook")
+    other = _create_book(client, title="Gardening", author="Jane Green", isbn="garden-2")
+
+    # Verify that only the matching book is returned
+    response = client.get("/books", query_string={"search": query})
+    assert response.status_code == 200
+    assert response.get_json() == [match]
+
+    # Searching should not modify the original book catalogue
+    assert client.get("/books").get_json() == [match, other]
+
+
+def test_search_books_returns_all_matching_records_and_excludes_unrelated_books(client):
+    # Create two matching books and one unrelated book.
+    first = _create_book(client, title="Clean Code Handbook")
+    exact = _create_book(client, title="Clean Code", isbn="exact-1")
+    _create_book(client, title="Gardening", author="Jane Green", isbn="garden-3")
+
+    # Verify that all matching books are returned, excluding unrelated records
+    response = client.get("/books", query_string={"search": "clean"})
+    assert response.status_code == 200
+    assert {book["id"] for book in response.get_json()} == {first["id"], exact["id"]}
+
+
+def test_search_books_places_exact_title_before_earlier_partial_match(client):
+    # R2: Exact title matches should appear before partial matches
+    partial = _create_book(client, title="Clean Code Handbook")
+    exact = _create_book(client, title="Clean Code", isbn="exact-2")
+
+    # Verify correct ordering even when the partial match was created first.
+    response = client.get("/books", query_string={"search": "Clean Code"})
+    assert response.status_code == 200
+    assert [book["id"] for book in response.get_json()] == [exact["id"], partial["id"]]
+
+
+def test_search_books_places_exact_author_before_partial_author_match(client):
+    # R2: Exact author matches should also appear before partial matches
+    partial = _create_book(client, author="Martin Fowler")
+    exact = _create_book(client, title="Other Book", author="Martin", isbn="author-1")
+
+    # Verify that the exact author match appears first
+    response = client.get("/books", query_string={"search": "Martin"})
+    assert response.status_code == 200
+    assert [book["id"] for book in response.get_json()] == [exact["id"], partial["id"]]
+
+
+def test_search_books_no_match_is_empty_and_preserves_catalogue(client):
+    # Search for a title that does not exist in the catalogue
+    book = _create_book(client)
+    response = client.get("/books", query_string={"search": "NoSuchTitle"})
+
+    # Verify that no results are returned and no books are modified
+    assert response.status_code == 200
+    assert response.get_json() == []
+    assert client.get("/books").get_json() == [book]
