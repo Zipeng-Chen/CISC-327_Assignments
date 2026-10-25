@@ -612,3 +612,97 @@ def _submit_return(client, loan_id, via_form):
         return client.post(f"/ui/loans/{loan_id}/return", follow_redirects=True)
     return client.put(f"/loans/{loan_id}/return")
 
+# Feature 8: Return a loan (R4, R8)
+# Tests return dates, inventory restoration, repeated returns, and invalid returns
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_return_records_date_restores_one_copy_and_keeps_other_loan_active(
+    client, assessment_day, via_form
+):
+    # Create two active loans for the same book
+    book = _create_book(client, total_copies=2)
+    alice = _create_member(client)
+    bob = _create_member(client, "Bob")
+    first = _checkout(client, book["id"], alice["id"])
+    second = _checkout(client, book["id"], bob["id"])
+
+    # Return the first loan through API or HTML form
+    response = _submit_return(client, first["id"], via_form)
+    assert response.status_code == 200
+
+    # Verify the return date is recorded correctly
+    expected_return = {**first, "return_date": assessment_day.isoformat()}
+    if not via_form:
+        assert response.get_json() == expected_return
+
+    # Confirm only the first loan is returned and one copy becomes available
+    actual = {loan["id"]: loan for loan in client.get("/loans").get_json()}
+    assert actual == {first["id"]: expected_return, second["id"]: second}
+    assert client.get(f"/books/{book['id']}").get_json() == {**book, "available_copies": 1}
+
+    # Check that the HTML page only shows return actions for active loans
+    html = client.get("/ui/loans").get_data(as_text=True)
+    assert f"/ui/loans/{first['id']}/return" not in html
+    assert f"/ui/loans/{second['id']}/return" in html
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_repeat_return_does_not_increase_stock_twice_or_change_return_record(
+    client, assessment_day, via_form
+):
+    # Create a loan and return it successfully
+    book = _create_book(client, total_copies=1)
+    member = _create_member(client)
+    loan = _checkout(client, book["id"], member["id"])
+    assert _submit_return(client, loan["id"], via_form).status_code == 200
+
+    # Attempt to return the same loan again
+    before = client.get("/loans").get_json()
+    response = _submit_return(client, loan["id"], via_form)
+
+    # API should reject repeated returns with HTTP 400
+    if not via_form:
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "Loan already returned"}
+
+    # Verify return date remains unchanged and stock is not increased twice
+    assert client.get("/loans").get_json() == before
+    assert before[0]["return_date"] == assessment_day.isoformat()
+    assert client.get(f"/books/{book['id']}").get_json() == book
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_return_unknown_loan_leaves_existing_loan_and_stock_unchanged(client, via_form):
+    # Create an active loan and attempt to return a non-existent loan
+    book = _create_book(client)
+    member = _create_member(client)
+    loan = _checkout(client, book["id"], member["id"])
+    before = client.get(f"/books/{book['id']}").get_json()
+    response = _submit_return(client, 9999, via_form)
+
+    # API should return HTTP 404 for an unknown loan
+    if not via_form:
+        assert response.status_code == 404
+        assert response.get_json() == {"error": "Loan not found"}
+
+    # Verify the existing loan and inventory remain unchanged
+    assert client.get("/loans").get_json() == [loan]
+    assert client.get(f"/books/{book['id']}").get_json() == before
+
+
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_return_after_book_deleted_does_not_partially_mark_loan_returned(client, via_form):
+    # R4: Loan return and inventory updates must remain consistent
+    book = _create_book(client)
+    member = _create_member(client)
+    loan = _checkout(client, book["id"], member["id"])
+
+    # Delete the book before attempting to return its active loan
+    assert client.delete(f"/books/{book['id']}").status_code == 204
+    client.application.config["PROPAGATE_EXCEPTIONS"] = False
+    _submit_return(client, loan["id"], via_form)
+
+    # An incomplete return must not update the loan record
+    # Error status is not checked because deletion behavior is unspecified
+    assert client.get("/loans").get_json() == [loan], "R4 prohibits a partial return update"
+    assert client.get(f"/books/{book['id']}").status_code == 404
