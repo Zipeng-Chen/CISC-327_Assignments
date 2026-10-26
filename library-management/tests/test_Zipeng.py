@@ -706,3 +706,120 @@ def test_return_after_book_deleted_does_not_partially_mark_loan_returned(client,
     # Error status is not checked because deletion behavior is unspecified
     assert client.get("/loans").get_json() == [loan], "R4 prohibits a partial return update"
     assert client.get(f"/books/{book['id']}").status_code == 404
+    
+    
+# Feature 9: List/filter loans (R11, R15, partial support)
+# Tests loan listing, member/book filtering, combined filters, and HTML display
+
+@pytest.fixture
+def loan_records(client, assessment_day):
+    # Create two books and two members for loan filtering tests
+    first_book = _create_book(client, title="First Loan Book", total_copies=3)
+    second_book = _create_book(client, title="Second Loan Book", isbn="loan-book-2")
+    alice = _create_member(client)
+    bob = _create_member(client, "Bob")
+
+    # Cross book and member IDs to detect incorrect filtering by ID
+    first = _checkout(client, first_book["id"], bob["id"])
+    second = _checkout(client, second_book["id"], alice["id"])
+    third = _checkout(client, first_book["id"], alice["id"])
+
+    # Return shared test data for all loan listing and filtering tests
+    return {"books": [first_book, second_book], "members": [alice, bob],
+            "loans": [first, second, third]}
+
+
+def test_list_loans_returns_all_records_with_correct_dates_and_borrowers(
+    client, assessment_day, loan_records
+):
+    # Retrieve all loans and verify every record is returned
+    response = client.get("/loans")
+    assert response.status_code == 200
+    assert response.get_json() == loan_records["loans"]
+
+    # Verify loan dates, due dates, and active return status
+    for loan in response.get_json():
+        assert loan["loan_date"] == assessment_day.isoformat()
+        assert loan["due_date"] == (assessment_day + timedelta(days=LOAN_PERIOD_DAYS)).isoformat()
+        assert loan["return_date"] is None
+
+    # Confirm all three loans have unique IDs
+    assert len({loan["id"] for loan in response.get_json()}) == 3
+
+
+@pytest.mark.parametrize("member_index", [0, 1], ids=["alice", "bob"])
+def test_filter_loans_by_member_returns_only_that_members_records(client, loan_records, member_index):
+    # Test filtering loans for Alice and Bob separately
+    member_id = loan_records["members"][member_index]["id"]
+    response = client.get("/loans", query_string={"member_id": member_id})
+
+    # Verify only loans belonging to the selected member are returned
+    expected = [loan for loan in loan_records["loans"] if loan["member_id"] == member_id]
+    assert response.status_code == 200
+    assert response.get_json() == expected, "R11 requires the selected member's loans"
+
+    # Filtering should not modify the complete loan list
+    assert client.get("/loans").get_json() == loan_records["loans"]
+
+
+@pytest.mark.parametrize("book_index", [0, 1], ids=["first_book", "second_book"])
+def test_filter_loans_by_book_returns_only_that_books_records(client, loan_records, book_index):
+    # Test filtering loans by each book ID
+    book_id = loan_records["books"][book_index]["id"]
+    response = client.get("/loans", query_string={"book_id": book_id})
+
+    # Verify only loans associated with the selected book are returned
+    expected = [loan for loan in loan_records["loans"] if loan["book_id"] == book_id]
+    assert response.status_code == 200
+    assert response.get_json() == expected
+
+    # Confirm filtering does not change the original loan records
+    assert client.get("/loans").get_json() == loan_records["loans"]
+
+
+@pytest.mark.parametrize("member_index,book_index", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_filter_loans_by_member_and_book_applies_both_conditions(
+    client, loan_records, member_index, book_index
+):
+    # Test all combinations of member and book filters
+    member_id = loan_records["members"][member_index]["id"]
+    book_id = loan_records["books"][book_index]["id"]
+    response = client.get("/loans", query_string={"member_id": member_id, "book_id": book_id})
+
+    # Verify results satisfy both filtering conditions
+    expected = [loan for loan in loan_records["loans"]
+                if loan["member_id"] == member_id and loan["book_id"] == book_id]
+    assert response.status_code == 200
+    assert response.get_json() == expected
+
+
+@pytest.mark.parametrize("query", [{"member_id": 9999}, {"book_id": 9999}])
+def test_filter_loans_without_matches_is_empty_and_does_not_modify_loans(client, loan_records, query):
+    # Search using a non-existent member or book ID
+    response = client.get("/loans", query_string=query)
+
+    # Verify no matching loans are returned
+    assert response.status_code == 200
+    assert response.get_json() == []
+
+    # Confirm existing loan records remain unchanged
+    assert client.get("/loans").get_json() == loan_records["loans"]
+
+
+def test_loans_page_displays_loan_records_dates_and_return_actions(client, assessment_day, loan_records):
+    # Retrieve the HTML loans page
+    response = client.get("/ui/loans")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+
+    # Verify the page displays loan columns and expected dates
+    assert "<th>Book ID</th>" in html and "<th>Member ID</th>" in html
+    assert assessment_day.isoformat() in html
+    assert (assessment_day + timedelta(days=LOAN_PERIOD_DAYS)).isoformat() in html
+
+    # Confirm each active loan has a return action on the page
+    for loan in loan_records["loans"]:
+        assert f"/ui/loans/{loan['id']}/return" in html
+
+    # Viewing the page should not modify loan records
+    assert client.get("/loans").get_json() == loan_records["loans"]
