@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request
 
 from app import store
-from app.models.loan import Loan, LOAN_PERIOD_DAYS
+from app.models.loan import CheckoutError, Loan, LOAN_PERIOD_DAYS
 
 FINE_PER_DAY = 0.25  # dollars charged per day overdue
 
@@ -25,20 +25,23 @@ def list_loans():
 @loans_bp.route("", methods=["POST"])
 def checkout_book():
     data = request.get_json()
-    book = store.books.get(data["book_id"])
-    if book is None:
-        return jsonify({"error": "Book not found"}), 404
+    
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "Request body must be a JSON object"
+        }), 400
 
-    book.available_copies -= 1
-
-    loan_id = store.next_id("loan")
-    loan = Loan(
-        id=loan_id,
-        book_id=data["book_id"],
-        member_id=data["member_id"],
-        due_date=Loan.default_due_date(),
-    )
-    store.loans[loan_id] = loan
+    try:
+        loan = Loan.checkout(
+            data.get("book_id"),
+            data.get("member_id"),
+        )
+    except CheckoutError as error:
+        return jsonify({
+            "error": str(error)
+        }), error.status_code
+    
+    
     return jsonify(loan.to_dict()), 201
 
 
