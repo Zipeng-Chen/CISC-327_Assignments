@@ -909,3 +909,21 @@ def test_enhancement_requires_all_overdue_loans_to_be_returned(
     assert saved_book["available_copies"] == 2
     
     
+@pytest.mark.parametrize("bad_id", [None, True, 1.5, "1", []])
+def test_enhancement_rejects_invalid_member_id_without_changes(
+    client, bad_id
+):
+    book = _create_book(client)
+    _create_member(client)
+
+    response = client.post("/loans", json={
+        "book_id": book["id"],
+        "member_id": bad_id,
+    })
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "member_id must be a positive integer"
+    }
+    assert client.get("/loans").get_json() == []
+    assert client.get(f"/books/{book['id']}").get_json() == book
