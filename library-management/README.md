@@ -51,12 +51,83 @@ app working without a REST client, and calls the same in-memory store.
 | GET | `/members/<id>` | Get one member |
 | PUT | `/members/<id>` | Update a member |
 | DELETE | `/members/<id>` | Delete a member |
-| POST | `/loans` | Check out a book (`book_id`, `member_id`) |
+| POST | `/loans` | Check out an available book to an existing member with no unreturned overdue loans (`book_id`, `member_id`) |
 | PUT | `/loans/<id>/return` | Return a loaned book |
 | GET | `/loans?member_id=&book_id=` | Look up loans |
 
+### Checkout eligibility (R7 and R16)
+
+Send a JSON object to `POST /loans` containing positive integer
+`book_id` and `member_id` values:
+
+```json
+{
+  "book_id": 1,
+  "member_id": 1
+}
+```
+
+A checkout succeeds only when:
+- The book exists.
+- The member exists.
+- The book has at least one available copy.
+- The member has no unreturned loan with a due date before today.
+
+Successful checkout returns HTTP **201** with the loan record, records
+today's checkout date and a due date 14 days later, and decreases the
+book's available copies by one.
+
+#### Rejected checkouts
+
+| Status | Reason |
+|---|---|
+| 400 | The JSON body is not an object, an ID is missing, or an ID is not a positive integer |
+| 404 | The book or member does not exist |
+| 403 | The member has an unreturned overdue loan |
+| 409 | The book has no available copies |
+
+For valid JSON requests, rejection responses contain an `error` message.
+For example:
+
+```json
+{
+  "error": "Member has an unreturned overdue loan"
+}
+```
+
+Rejected checkouts leave loan records, inventory, and ID counters unchanged.
+Boolean values, decimal numbers, and numeric strings are not accepted as
+JSON IDs.
+
+#### Overdue rules
+
+- A loan due today does not block borrowing.
+- An unreturned loan blocks borrowing from the first day after its due date.
+- The three-day fine grace period does not extend borrowing eligibility.
+- Returned loans do not block borrowing.
+- Another member's overdue loans do not block borrowing.
+- If a member has multiple overdue loans, all must be returned before
+  another checkout is allowed.
+
+Dates follow the application's server-local calendar date.
+
+The existing `/ui/loans` form uses the same checkout rules. Successful
+submissions redirect to the loans page; rejected submissions display
+an error page.
+
+
+
 ## Tests
 
+Run the complete test suite from the `library-management` directory:
+
 ```bash
-pytest
+python -m pytest -v
 ```
+
+Run the new checkout enhancement tests separately:
+
+```bash
+python -m pytest -v tests/test_Zipeng.py -k enhancement
+```
+The targeted command selects tests whose names contain `enhancement`.
