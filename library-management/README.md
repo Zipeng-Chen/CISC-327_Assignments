@@ -29,7 +29,8 @@ books in/out:
 | Loans | `/ui/loans` |
 
 This UI is separate from the JSON API below — it's there so you can see the
-app working without a REST client, and calls the same in-memory store.
+app working without a REST client, and calls the same in-memory store.\
+Returning a book through the Loans page uses the `POST /ui/loans/<int:loan_id>/return` route. Checks that the book exists before updating the loans return date. If not, no records shall be modified.
 
 ## Entities
 
@@ -52,7 +53,7 @@ app working without a REST client, and calls the same in-memory store.
 | PUT | `/members/<id>` | Update a member |
 | DELETE | `/members/<id>` | Delete a member |
 | POST | `/loans` | Check out an available book to an existing member with no unreturned overdue loans (`book_id`, `member_id`) |
-| PUT | `/loans/<id>/return` | Return a loaned book |
+| PUT | `/loans/<id>/return` | Return a loaned book. Validates both the loan and book exist before updating data |
 | GET | `/loans?member_id=&book_id=` | Look up loans |
 
 ### Checkout eligibility (R7 and R16)
@@ -128,6 +129,6 @@ python -m pytest -v
 Run the new checkout enhancement tests separately:
 
 ```bash
-python -m pytest -v tests/test_Zipeng.py -k enhancement
+python -m pytest -v tests/test_<name>.py -k enhancement
 ```
 The targeted command selects tests whose names contain `enhancement`.
