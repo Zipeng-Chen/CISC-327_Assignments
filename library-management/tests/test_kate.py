@@ -1,5 +1,4 @@
-import pytest
-
+# TESTS FOR EXISTING FEATURES
 def test_register_member_returns_created_member(client):
     """
     confirms a member posted to /members is returned with correct fields
@@ -120,7 +119,7 @@ def test_loan_renewal_extends_remaining_time(client):
     }
     assert client.post("/loans", json=loan_payload).status_code == 201
 
-    assert client.put("/loans/999/renew", json={}).status_code == 404
+    assert client.put("/loans/999/renew").status_code == 404
 
     old_date = client.get("/loans?member_id=1&book_id=1").get_json()
     assert client.put("/loans/1/renew").status_code == 200
@@ -254,3 +253,70 @@ def test_home_page__and_links_return_successfully(client):
     response = client.get("/")
 
     assert response.status_code == 200
+
+# TESTS FOR ENHANCEMENT
+def test_enhancement_prevention_of_partial_loan_updates(client):
+    """
+    confirms returning a loan fails if its book has been deleted
+    """
+    book_payload = {
+        "title" : "Clean Code",
+        "author" : "Robert C. Martin",
+        "isbn" : "978-0132350884",
+        "total_copies": 1,
+    }
+    assert client.post("/books", json=book_payload).status_code == 201
+
+    member_payload = {
+        "name" : "Alice Smith",
+        "email" : "alice@example.com",
+    }
+    assert client.post("/members", json=member_payload).status_code == 201
+
+    loan_payload = {
+            "book_id" : 1,
+            "member_id" : 1,
+        }
+    assert client.post("/loans", json=loan_payload).status_code == 201
+
+    assert client.delete("/books/1").status_code == 204
+    assert client.get("/books/1").status_code == 404
+    
+    response = client.put("/loans/1/return")
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Book not found"
+
+def test_enhancement_html_return_prevents_partial_loan_updates(client):
+    """
+    confirms html return doesn't partially update a loan if its book has been deleted
+    """
+    book_payload = {
+        "title" : "Clean Code",
+        "author" : "Robert C. Martin",
+        "isbn" : "978-0132350884",
+        "total_copies": 1,
+    }
+    assert client.post("/books", json=book_payload).status_code == 201
+
+    member_payload = {
+        "name" : "Alice Smith",
+        "email" : "alice@example.com",
+    }
+    assert client.post("/members", json=member_payload).status_code == 201
+
+    loan_payload = {
+            "book_id" : 1,
+            "member_id" : 1,
+        }
+    assert client.post("/loans", json=loan_payload).status_code == 201
+
+    loan = client.get("/loans").get_json()[0]
+
+    assert client.delete("/books/1").status_code == 204
+    assert client.get("/books/1").status_code == 404
+
+    response = client.post("/ui/loans/1/return")
+    assert response.status_code == 302
+
+    loans_after = client.get("/loans").get_json()[0]
+    assert loan == loans_after
