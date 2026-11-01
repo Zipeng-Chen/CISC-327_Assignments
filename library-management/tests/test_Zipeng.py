@@ -823,3 +823,107 @@ def test_loans_page_displays_loan_records_dates_and_return_actions(client, asses
 
     # Viewing the page should not modify loan records
     assert client.get("/loans").get_json() == loan_records["loans"]
+    
+    
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_enhancement_other_members_overdue_loan_does_not_block_checkout(
+    client, assessment_day, via_form
+):
+    book = _create_book(client, total_copies=3)
+    alice = _create_member(client, "Alice")
+    bob = _create_member(client, "Bob")
+
+    alice_loan = _checkout(client, book["id"], alice["id"])
+    store.loans[alice_loan["id"]].due_date = (
+        assessment_day - timedelta(days=1)
+    )
+
+    before_loans = client.get("/loans").get_json()
+
+    response = _submit_checkout(
+        client, book["id"], bob["id"], via_form
+    )
+
+    assert response.status_code == (200 if via_form else 201)
+
+    loans = client.get("/loans").get_json()
+    assert len(loans) == 2
+    assert loans[0] == before_loans[0]
+    assert loans[1]["member_id"] == bob["id"]
+    assert loans[1]["book_id"] == book["id"]
+
+    saved_book = client.get(f"/books/{book['id']}").get_json()
+    assert saved_book["available_copies"] == 1
+    
+    
+@pytest.mark.parametrize("via_form", [False, True], ids=["api", "form"])
+def test_enhancement_requires_all_overdue_loans_to_be_returned(
+    client, assessment_day, via_form
+):
+    book = _create_book(client, total_copies=3)
+    member = _create_member(client)
+
+    first = _checkout(client, book["id"], member["id"])
+    second = _checkout(client, book["id"], member["id"])
+
+    store.loans[first["id"]].due_date = (
+        assessment_day - timedelta(days=1)
+    )
+    store.loans[second["id"]].due_date = (
+        assessment_day - timedelta(days=3)
+    )
+
+    for overdue_loan in (first, second):
+        before_loans = client.get("/loans").get_json()
+        before_book = client.get(f"/books/{book['id']}").get_json()
+
+        rejected = _submit_checkout(
+            client, book["id"], member["id"], via_form
+        )
+
+        assert rejected.status_code == 403
+        assert client.get("/loans").get_json() == before_loans
+        assert client.get(f"/books/{book['id']}").get_json() == before_book
+
+        returned = _submit_return(
+            client, overdue_loan["id"], via_form
+        )
+        assert returned.status_code == 200
+
+    accepted = _submit_checkout(
+        client, book["id"], member["id"], via_form
+    )
+
+    assert accepted.status_code == (200 if via_form else 201)
+
+    loans = client.get("/loans").get_json()
+    assert len(loans) == 3
+    assert all(
+        loan["return_date"] == assessment_day.isoformat()
+        for loan in loans[:2]
+    )
+    assert loans[-1]["return_date"] is None
+    assert loans[-1]["member_id"] == member["id"]
+
+    saved_book = client.get(f"/books/{book['id']}").get_json()
+    assert saved_book["available_copies"] == 2
+    
+    
+@pytest.mark.parametrize("bad_id", [None, True, 1.5, "1", []])
+def test_enhancement_rejects_invalid_member_id_without_changes(
+    client, bad_id
+):
+    book = _create_book(client)
+    _create_member(client)
+
+    response = client.post("/loans", json={
+        "book_id": book["id"],
+        "member_id": bad_id,
+    })
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "member_id must be a positive integer"
+    }
+    assert client.get("/loans").get_json() == []
+    assert client.get(f"/books/{book['id']}").get_json() == book

@@ -1,10 +1,10 @@
 from datetime import date
 
-from flask import Blueprint, redirect, render_template, request, url_for
+from flask import Blueprint, abort, redirect, render_template, request, url_for
 
 from app import store
 from app.models.book import Book
-from app.models.loan import Loan
+from app.models.loan import CheckoutError, Loan
 from app.models.member import Member
 
 views_bp = Blueprint("views", __name__)
@@ -58,20 +58,15 @@ def delete_member_page(member_id):
 @views_bp.route("/ui/loans", methods=["GET", "POST"])
 def loans_page():
     if request.method == "POST":
-        book_id = int(request.form["book_id"])
-        member_id = int(request.form["member_id"])
-        book = store.books.get(book_id)
-        if book is not None:
-            book.available_copies -= 1
-            loan_id = store.next_id("loan")
-            loan = Loan(
-                id=loan_id,
-                book_id=book_id,
-                member_id=member_id,
-                due_date=Loan.default_due_date(),
+        try:
+            Loan.checkout(request.form.get("book_id", type=int), request.form.get("member_id", type=int),
             )
-            store.loans[loan_id] = loan
+        except CheckoutError as error:
+            abort(error.status_code, description=str(error))
+
+        
         return redirect(url_for("views.loans_page"))
+    
     return render_template("loans.html", loans=store.loans.values())
 
 
