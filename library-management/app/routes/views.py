@@ -73,9 +73,13 @@ def loans_page():
 @views_bp.route("/ui/loans/<int:loan_id>/return", methods=["POST"])
 def return_loan_page(loan_id):
     loan = store.loans.get(loan_id)
+    
     if loan is not None and loan.return_date is None:
-        loan.return_date = date.today()
+        # check if book exists first
         book = store.books.get(loan.book_id)
+
         if book is not None:
+            # only update records if so
+            loan.return_date = date.today()
             book.available_copies += 1
     return redirect(url_for("views.loans_page"))

@@ -48,13 +48,19 @@ def checkout_book():
 @loans_bp.route("/<int:loan_id>/return", methods=["PUT"])
 def return_book(loan_id):
     loan = store.loans.get(loan_id)
+
     if loan is None:
         return jsonify({"error": "Loan not found"}), 404
     if loan.return_date is not None:
         return jsonify({"error": "Loan already returned"}), 400
 
-    loan.return_date = date.today()
+    # check if book still exists
     book = store.books.get(loan.book_id)
+    if book is None:
+        return jsonify({"error": "Book not found"}), 404
+
+    # now records can be updated
+    loan.return_date = date.today()
     book.available_copies += 1
 
     return jsonify(loan.to_dict())
