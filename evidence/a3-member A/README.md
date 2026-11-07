@@ -1,6 +1,6 @@
 # Assignment 3 Member A results
 
-**Zipeng Chen | Branch: `feature/a3-zipeng` | 7 November 2026**
+**Zipeng Chen | Branch: `feature/checkout-notification` | 7 November 2026**
 
 Checkout confirmation is implemented in `POST /loans`. The response header
 `X-Notification-Sent` reports success or failure. A failed notification keeps
