@@ -170,4 +170,4 @@ search ranking (2), reservation priority (2), and member loan filtering (6)
 Their original assertions remain active. An unexpected pass fails the suite, will remove the corresponding marker when its defect is fixed.
 
 For the results and two coverage screenshots, see
-[Assignment 3 Member A evidence](../evidence/a3-member A/README.md).
+[Assignment 3 Member A evidence](../evidence/a3-member%20A/README.md)
