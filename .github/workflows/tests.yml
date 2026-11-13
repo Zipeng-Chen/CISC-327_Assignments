@@ -26,7 +26,9 @@ jobs:
         run: python -m pip install --upgrade pip
       
       - name: install dependencies
-        run: python -m pip install -r requirements.txt # executes shell command. installs dependencies listed in `requirements.txt`
+        run: |
+          python -m pip install -r requirements.txt # executes shell command. installs dependencies listed in `requirements.txt`
+          python -m pip install pytest-cov=6.0.0
         working-directory: ./library-management
 
       - name: verify dependencies
