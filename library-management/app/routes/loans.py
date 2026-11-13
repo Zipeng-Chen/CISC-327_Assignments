@@ -2,6 +2,10 @@ from datetime import date, timedelta
 
 from flask import Blueprint, jsonify, request
 
+from notification_service import (
+    CHECKOUT_MESSAGE_TEMPLATE, CHECKOUT_SUBJECT, send_notification,
+)
+
 from app import store
 from app.models.loan import CheckoutError, Loan, LOAN_PERIOD_DAYS
 
@@ -42,7 +46,22 @@ def checkout_book():
         }), error.status_code
     
     
-    return jsonify(loan.to_dict()), 201
+    # Notify only after checkout validation and the loan/stock update succeed.
+    member = store.members[loan.member_id]
+    book = store.books[loan.book_id]
+    sent = send_notification(
+        member.email,
+        CHECKOUT_SUBJECT,
+        CHECKOUT_MESSAGE_TEMPLATE.format(
+            member_name=member.name, book_title=book.title,
+            loan_id=loan.id, due_date=loan.due_date.isoformat(),
+        ),
+    )
+    # A notification failure does not undo a valid checkout. Keep the existing
+    # loan JSON contract, and expose the delivery result as response metadata.
+    response = jsonify(loan.to_dict())
+    response.headers["X-Notification-Sent"] = "true" if sent else "false"
+    return response, 201
 
 
 @loans_bp.route("/<int:loan_id>/return", methods=["PUT"])

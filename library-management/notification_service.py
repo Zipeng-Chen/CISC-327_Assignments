@@ -15,9 +15,16 @@ Examples of recipients in the supplied templates:
 
 For application tests, stub send_notification to return True or False, or
 mock it to verify the recipient, subject, and message. Assert the resulting
-application behaviour too. Patch the dependency where your application uses it.
+application behavior too. Patch the dependency where your application uses it.
 Use clear_notifications before and after tests that use the real simulator.
 """
+
+# Library-specific wording; the simulator interface and delivery behavior stay unchanged.
+CHECKOUT_SUBJECT = "[Library] Checkout confirmation"
+CHECKOUT_MESSAGE_TEMPLATE = (
+    "Hello {member_name}, you checked out '{book_title}' "
+    "(loan #{loan_id}). Please return it by {due_date}."
+)
 
 _notifications = []
 

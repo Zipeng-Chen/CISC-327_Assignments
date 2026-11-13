@@ -52,7 +52,7 @@ Returning a book through the Loans page uses the `POST /ui/loans/<int:loan_id>/r
 | GET | `/members/<id>` | Get one member |
 | PUT | `/members/<id>` | Update a member |
 | DELETE | `/members/<id>` | Delete a member |
-| POST | `/loans` | Check out an available book to an existing member with no unreturned overdue loans (`book_id`, `member_id`) |
+| POST | `/loans` | Check out an available book to an existing member with no unreturned overdue loans (`book_id`, `member_id`); attempts a checkout confirmation and reports `X-Notification-Sent` |
 | PUT | `/loans/<id>/return` | Return a loaned book. Validates both the loan and book exist before updating data |
 | GET | `/loans?member_id=&book_id=` | Look up loans |
 
@@ -132,3 +132,42 @@ Run the new checkout enhancement tests separately:
 python -m pytest -v tests/test_<name>.py -k enhancement
 ```
 The targeted command selects tests whose names contain `enhancement`.
+
+## Assignment 3 checkout notifications
+
+After a successful JSON API `POST /loans`, the application calls the provided
+in-memory notification simulator once. The recipient is the borrowing member's
+email. The subject is `[Library] Checkout confirmation`, and the message includes
+the member name, book title, loan ID, and ISO due date. These wording templates
+are defined in `notification_service.py`, beside `run.py` and outside `app/`.
+No email or network request is sent.
+
+The response remains HTTP 201 with the existing loan JSON. Its
+`X-Notification-Sent` header is `true` when the simulator records the notification
+and `false` when it returns False. A failed notification does not reverse the
+checkout, restore stock, or create another loan. Rejected checkouts return before
+the notification call and have no notification-result header. This event is
+scoped to the JSON checkout API; the HTML checkout form keeps its existing flow.
+
+Member A tests replace `app.routes.loans.send_notification`, the name used by
+the route. The shared test fixture clears simulator history between tests.
+
+Run Member A's tests from this project folder:
+
+```bash
+python -m pytest -v tests/test_a3_Zipeng.py
+```
+
+measure application line coverage:
+
+```bash
+python -m pytest -v --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=90
+```
+
+Coverage excludes tests and the notification simulator. Thirteen existing
+Assignment 2 cases use expected-failure markers: missing book fields (3),
+search ranking (2), reservation priority (2), and member loan filtering (6)
+Their original assertions remain active. An unexpected pass fails the suite, will remove the corresponding marker when its defect is fixed.
+
+For the results and two coverage screenshots, see
+[Assignment 3 Member A evidence](../evidence/a3-member%20A/README.md)
