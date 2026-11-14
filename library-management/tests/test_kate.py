@@ -320,3 +320,108 @@ def test_enhancement_html_return_prevents_partial_loan_updates(client):
 
     loans_after = client.get("/loans").get_json()[0]
     assert loan == loans_after
+
+# COVERAGE DIRECTED TESTS
+def test_coverage_update_missing_member_id(client):
+    """
+    confirms /members PUT does not throw an exception but returns error message and sets status code to 404 when member_id is missing
+    """
+    response = client.put("/members/1" , json={"name":"Alice Smith"})
+
+    assert response.get_json()["error"] == "Member not found"
+    assert response.status_code == 404
+
+def test_coverage_delete_missing_member_id(client):
+    """
+    confirms /members DELETE does not throw an exception but returns error message and sets status code to 404 when member_id is missing
+    """
+    response = client.delete("/members/1" , json={"name":"Alice Smith"})
+    
+    assert response.get_json()["error"] == "Member not found"
+    assert response.status_code == 404
+
+def test_coverage_list_reservations_by_book(client):
+    """
+    confirms /reservations GET returns correct information when book_id is specified
+    """
+    book_payload = {
+        "title" : "Clean Code",
+        "author" : "Robert C. Martin",
+        "isbn" : "978-0132350884",
+        "total_copies": 2,
+    }
+    assert client.post("/books", json=book_payload).status_code == 201
+
+    member_payload = {
+        "name" : "Alice Smith",
+        "email" : "alice@example.com",
+    }
+    assert client.post("/members", json=member_payload).status_code == 201
+
+    reservation_payload = {
+        "book_id" : 1,
+        "member_id" : 1,
+    }
+    assert client.post("/reservations", json=reservation_payload).status_code == 201
+
+    response = client.get("/reservations?book_id=1").get_json()
+
+    assert response[0]["id"] == 1
+    assert response[0]["book_id"] == 1
+    assert response[0]["member_id"] == 1
+
+def test_coverage_create_reservation_missing_book_id(client):
+    """
+    confirms /reservations POST does not throw an exception but returns error message and sets status code to 404 when book_id is missing
+    """
+    book_payload = {
+        "title" : "Clean Code",
+        "author" : "Robert C. Martin",
+        "isbn" : "978-0132350884",
+        "total_copies": 2,
+    }
+    assert client.post("/books", json=book_payload).status_code == 201
+
+    member_payload = {
+        "name" : "Alice Smith",
+        "email" : "alice@example.com",
+    }
+    assert client.post("/members", json=member_payload).status_code == 201
+
+    reservation_payload = {
+        "book_id" : None,
+        "member_id" : 1,
+    }
+
+    response = client.post("/reservations", json=reservation_payload)
+
+    assert response.get_json()["error"] == "Book not found"
+    assert response.status_code == 404
+
+def test_coverage_create_reservation_missing_member_id(client):
+    """
+    confirms /reservations POST does not throw an exception but returns error message and sets status code to 404 when member_id is missing
+    """
+    book_payload = {
+        "title" : "Clean Code",
+        "author" : "Robert C. Martin",
+        "isbn" : "978-0132350884",
+        "total_copies": 2,
+    }
+    assert client.post("/books", json=book_payload).status_code == 201
+
+    member_payload = {
+        "name" : "Alice Smith",
+        "email" : "alice@example.com",
+    }
+    assert client.post("/members", json=member_payload).status_code == 201
+
+    reservation_payload = {
+        "book_id" : 1,
+        "member_id" : None,
+    }
+    
+    response = client.post("/reservations", json=reservation_payload) 
+
+    assert response.get_json()["error"] == "Member not found"
+    assert response.status_code == 404
