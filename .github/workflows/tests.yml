@@ -35,6 +35,20 @@ jobs:
         run: python -m pip show pytest-cov
         working-directory: ./library-management
 
-      - name: run tests
-        run: python -m pytest -v --cov=app --cov-report=term-missing --cov-fail-under=90 
+      - name: Run existing tests with coverage
         working-directory: ./library-management
+        run: python -m pytest tests --ignore=tests/e2e -v --cov=app --cov-report=term-missing --cov-fail-under=90
+
+      - name: Install Chromium for Playwright
+        working-directory: ./library-management
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser tests against Flask
+        working-directory: ./library-management
+        run: |
+          python -m flask --app run:app run --port 5000 &
+          flask_pid=$!
+          trap 'kill "$flask_pid"' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 \
+            http://127.0.0.1:5000/ui/books --output /dev/null
+          python -m pytest tests/e2e -v
